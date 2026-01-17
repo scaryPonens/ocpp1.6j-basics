@@ -1,0 +1,8 @@
+[project]
+name = "websocket-demo"
+version = "0.1.0"
+description = "A minimal WebSocket server and client demo"
+requires-python = ">=3.11"
+dependencies = [
+    "websockets>=12.0",
+]
