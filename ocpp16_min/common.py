@@ -130,6 +130,69 @@ def make_meter_values_call(
     return make_call(uid or new_uid(), "MeterValues", payload)
 
 
+def make_set_charging_profile_call(
+    uid: str | None = None,
+    connector_id: int = 1,
+    profile_id: int = 1,
+    limit_kw: float = 7.0,
+) -> list[Any]:
+    limit_w = int(limit_kw * 1000)
+    charging_profile = {
+        "chargingProfileId": profile_id,
+        "stackLevel": 1,
+        "chargingProfilePurpose": "TxProfile",
+        "chargingProfileKind": "Absolute",
+        "chargingSchedule": {
+            "chargingRateUnit": "W",
+            "chargingSchedulePeriod": [
+                {
+                    "startPeriod": 0,
+                    "limit": limit_w,
+                }
+            ],
+        },
+    }
+    payload = {
+        "connectorId": connector_id,
+        "chargingProfile": charging_profile,
+    }
+    return make_call(uid or new_uid(), "SetChargingProfile", payload)
+
+
+def make_clear_charging_profile_call(uid: str | None = None, profile_id: int | None = None) -> list[Any]:
+    payload: dict[str, Any] = {}
+    if profile_id is not None:
+        payload["chargingProfileId"] = profile_id
+    return make_call(uid or new_uid(), "ClearChargingProfile", payload)
+
+
+def is_set_charging_profile(action: str) -> bool:
+    return action == "SetChargingProfile"
+
+
+def is_clear_charging_profile(action: str) -> bool:
+    return action == "ClearChargingProfile"
+
+
+def get_charging_profile_id(payload: dict[str, Any]) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    if "chargingProfileId" in payload:
+        value = payload.get("chargingProfileId")
+    else:
+        profile = payload.get("chargingProfile")
+        if isinstance(profile, dict):
+            value = profile.get("chargingProfileId")
+        else:
+            value = None
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def utc_now_iso_z() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

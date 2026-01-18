@@ -20,6 +20,7 @@ from websockets.exceptions import ConnectionClosed
 try:
     from .common import (
         coerce_int,
+        get_charging_profile_id,
         make_call_error,
         make_call_result,
         parse_iso_z,
@@ -30,6 +31,7 @@ try:
 except ImportError:  # Allows running as a script without -m
     from common import (
         coerce_int,
+        get_charging_profile_id,
         make_call_error,
         make_call_result,
         parse_iso_z,
@@ -60,6 +62,7 @@ class ChargePointSession:
     active_transaction_id: int | None = None
     transactions: dict[int, dict] = field(default_factory=dict)
     last_meter_wh: int | None = None
+    charging_profiles: dict[int, dict] = field(default_factory=dict)
 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
@@ -180,6 +183,19 @@ def _summary_for(action: str, payload: dict[str, object]) -> dict[str, object]:
             "connectorId": payload.get("connectorId"),
             "transactionId": payload.get("transactionId"),
         }
+    if action == "SetChargingProfile":
+        profile = payload.get("chargingProfile")
+        schedule = profile.get("chargingSchedule") if isinstance(profile, dict) else {}
+        periods = schedule.get("chargingSchedulePeriod") if isinstance(schedule, dict) else []
+        first = periods[0] if isinstance(periods, list) and periods else {}
+        return {
+            "profileId": get_charging_profile_id(payload),
+            "stackLevel": profile.get("stackLevel") if isinstance(profile, dict) else None,
+            "purpose": profile.get("chargingProfilePurpose") if isinstance(profile, dict) else None,
+            "limit": first.get("limit") if isinstance(first, dict) else None,
+        }
+    if action == "ClearChargingProfile":
+        return {"profileId": get_charging_profile_id(payload)}
     return {}
 
 
@@ -243,6 +259,39 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
             raise ValidationError("PropertyConstraintViolation", "sampledValue.value is required")
         return
 
+    if action == "SetChargingProfile":
+        charging_profile = payload.get("chargingProfile")
+        if not isinstance(charging_profile, dict):
+            raise ValidationError("PropertyConstraintViolation", "chargingProfile must be an object")
+        coerce_int(charging_profile.get("chargingProfileId"), "chargingProfileId")
+        coerce_int(charging_profile.get("stackLevel"), "stackLevel")
+        if not isinstance(charging_profile.get("chargingProfilePurpose"), str):
+            raise ValidationError("PropertyConstraintViolation", "chargingProfilePurpose must be a string")
+        if not isinstance(charging_profile.get("chargingProfileKind"), str):
+            raise ValidationError("PropertyConstraintViolation", "chargingProfileKind must be a string")
+        schedule = charging_profile.get("chargingSchedule")
+        if not isinstance(schedule, dict):
+            raise ValidationError("PropertyConstraintViolation", "chargingSchedule must be an object")
+        if not isinstance(schedule.get("chargingRateUnit"), str):
+            raise ValidationError("PropertyConstraintViolation", "chargingRateUnit must be a string")
+        periods = schedule.get("chargingSchedulePeriod")
+        if not isinstance(periods, list) or not periods:
+            raise ValidationError("PropertyConstraintViolation", "chargingSchedulePeriod must be a non-empty list")
+        first = periods[0]
+        if not isinstance(first, dict):
+            raise ValidationError("PropertyConstraintViolation", "chargingSchedulePeriod entry must be an object")
+        if "limit" not in first:
+            raise ValidationError("PropertyConstraintViolation", "chargingSchedulePeriod.limit is required")
+        if not isinstance(first.get("limit"), (int, float)):
+            raise ValidationError("PropertyConstraintViolation", "chargingSchedulePeriod.limit must be a number")
+        return
+
+    if action == "ClearChargingProfile":
+        profile_id = payload.get("chargingProfileId")
+        if profile_id is not None:
+            coerce_int(profile_id, "chargingProfileId")
+        return
+
     raise ValidationError("PropertyConstraintViolation", "unsupported action")
 
 
@@ -278,6 +327,14 @@ async def _send_call_result(
 def _dump_state_summary() -> dict[str, object]:
     items = []
     for cp_id, session in _sessions.items():
+        profiles = []
+        for profile_id, profile_data in session.charging_profiles.items():
+            profiles.append(
+                {
+                    "id": profile_id,
+                    "limit_w": profile_data.get("limit_w"),
+                }
+            )
         items.append(
             {
                 "chargePointId": cp_id,
@@ -285,6 +342,7 @@ def _dump_state_summary() -> dict[str, object]:
                 "active_transaction_id": session.active_transaction_id,
                 "last_seen_at": session.last_seen_at.isoformat() if session.last_seen_at else None,
                 "last_meter_wh": session.last_meter_wh,
+                "charging_profiles": profiles,
             }
         )
     return {"sessions": items}
@@ -429,6 +487,48 @@ async def handle_client(websocket: websockets.WebSocketServerProtocol) -> None:
                         payload.get("transactionId"),
                         first.get("timestamp"),
                         value,
+                    )
+                elif action == "SetChargingProfile":
+                    charging_profile = payload.get("chargingProfile", {})
+                    profile_id = coerce_int(charging_profile.get("chargingProfileId"), "chargingProfileId")
+                    stack_level = coerce_int(charging_profile.get("stackLevel"), "stackLevel")
+                    purpose = charging_profile.get("chargingProfilePurpose")
+                    schedule = charging_profile.get("chargingSchedule", {})
+                    periods = schedule.get("chargingSchedulePeriod", [])
+                    first = periods[0] if isinstance(periods, list) and periods else {}
+                    limit = first.get("limit") if isinstance(first, dict) else None
+                    session.charging_profiles[profile_id] = {
+                        "profile": charging_profile,
+                        "received_at": _now().isoformat(),
+                        "limit_w": limit,
+                        "purpose": purpose,
+                        "stackLevel": stack_level,
+                    }
+                    result_payload = {"status": "Accepted"}
+                    logger.info(
+                        "SetChargingProfile: chargePointId=%s profileId=%s stackLevel=%s limit=%s purpose=%s",
+                        charge_point_id,
+                        profile_id,
+                        stack_level,
+                        limit,
+                        purpose,
+                    )
+                elif action == "ClearChargingProfile":
+                    profile_id = payload.get("chargingProfileId")
+                    cleared = []
+                    if profile_id is None:
+                        cleared = list(session.charging_profiles.keys())
+                        session.charging_profiles.clear()
+                    else:
+                        profile_id_int = coerce_int(profile_id, "chargingProfileId")
+                        if profile_id_int in session.charging_profiles:
+                            session.charging_profiles.pop(profile_id_int, None)
+                            cleared = [profile_id_int]
+                    result_payload = {"status": "Accepted"}
+                    logger.info(
+                        "ClearChargingProfile: chargePointId=%s cleared=%s",
+                        charge_point_id,
+                        cleared,
                     )
                 else:
                     await _send_call_error(

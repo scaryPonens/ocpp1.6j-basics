@@ -19,7 +19,9 @@ from .common import (
     BOOTING,
     is_call_result,
     make_call,
+    make_clear_charging_profile_call,
     make_heartbeat_call,
+    make_set_charging_profile_call,
     make_status_notification_call,
     make_start_transaction_call,
     make_stop_transaction_call,
@@ -244,6 +246,29 @@ async def main() -> int:
 
                 ws_lock = asyncio.Lock()
                 error_event = asyncio.Event()
+                profile_id = 1
+                set_profile_call = make_set_charging_profile_call(
+                    connector_id=1,
+                    profile_id=profile_id,
+                    limit_kw=7.0,
+                )
+                set_profile_uid = set_profile_call[1]
+                async with ws_lock:
+                    await websocket.send(json.dumps(set_profile_call))
+                    logger.info("SetChargingProfile sent (profileId=%s limit_kw=7.0)", profile_id)
+                    set_profile_response_text = await websocket.recv()
+                set_profile_payload, failed = _parse_response(
+                    "SetChargingProfile",
+                    set_profile_response_text,
+                    set_profile_uid,
+                )
+                if failed or set_profile_payload is None:
+                    return 1
+                if set_profile_payload.get("status") != "Accepted":
+                    logger.error("SetChargingProfile not accepted")
+                    return 1
+                logger.info("SetChargingProfile acknowledged (profileId=%s)", profile_id)
+
                 heartbeat_task = asyncio.create_task(
                     _heartbeat_loop(websocket, interval, ws_lock, error_event, max_count=3)
                 )
@@ -266,6 +291,24 @@ async def main() -> int:
                 if error_event.is_set():
                     heartbeat_task.cancel()
                     return 1
+
+                clear_profile_call = make_clear_charging_profile_call(profile_id=profile_id)
+                clear_profile_uid = clear_profile_call[1]
+                async with ws_lock:
+                    await websocket.send(json.dumps(clear_profile_call))
+                    logger.info("ClearChargingProfile sent (profileId=%s)", profile_id)
+                    clear_profile_response_text = await websocket.recv()
+                clear_profile_payload, failed = _parse_response(
+                    "ClearChargingProfile",
+                    clear_profile_response_text,
+                    clear_profile_uid,
+                )
+                if failed or clear_profile_payload is None:
+                    return 1
+                if clear_profile_payload.get("status") != "Accepted":
+                    logger.error("ClearChargingProfile not accepted")
+                    return 1
+                logger.info("ClearChargingProfile acknowledged (profileId=%s)", profile_id)
 
                 session.meter_stop = energy_state["value"]
                 stop_call = make_stop_transaction_call(
