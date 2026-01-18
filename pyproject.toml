@@ -1,7 +1,7 @@
 [project]
-name = "websocket-demo"
+name = "ocpp16-min"
 version = "0.1.0"
-description = "A minimal WebSocket server and client demo"
+description = "Minimal OCPP 1.6-J BootNotification over WebSockets"
 requires-python = ">=3.11"
 dependencies = [
     "opentelemetry-api>=1.24.0",
@@ -14,5 +14,5 @@ dependencies = [
 requires = ["setuptools>=69.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-py-modules = ["server", "client"]
+[tool.setuptools.packages.find]
+where = ["."]

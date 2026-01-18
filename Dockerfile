@@ -2,13 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
-RUN pip install --no-cache-dir uv \
-    && uv sync --frozen
-
-COPY server.py .
+COPY pyproject.toml ./
+COPY ocpp16_min ./ocpp16_min
+RUN pip install --no-cache-dir .
 
 ENV APP_HOST=0.0.0.0
-ENV APP_PORT=8765
+ENV APP_PORT=9000
 
-CMD ["uv", "run", "python", "server.py"]
+CMD ["python", "-m", "ocpp16_min.server"]

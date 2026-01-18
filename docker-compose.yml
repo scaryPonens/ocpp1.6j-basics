@@ -6,11 +6,17 @@ services:
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
 
-  websocket-server:
+  ocpp16-server:
     build: .
-    env_file:
-      - .env
+    command: ["python", "-m", "ocpp16_min.server"]
+    environment:
+      - APP_HOST=0.0.0.0
+      - APP_PORT=9000
+      - OTEL_SERVICE_NAME=ocpp16-server
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    volumes:
+      - .:/app
     ports:
-      - "${APP_PORT:-8765}:8765"
+      - "9000:9000"
     depends_on:
       - jaeger
