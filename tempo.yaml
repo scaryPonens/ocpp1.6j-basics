@@ -1,0 +1,72 @@
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9096
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/traces
+    
+    block:
+      version: vParquet4
+    
+    wal:
+      path: /tmp/tempo/wal
+
+compactor:
+  compaction:
+    compaction_window: 1h
+    block_retention: 24h
+    compacted_block_retention: 1h
+  ring:
+    kvstore:
+      store: inmemory
+
+memberlist:
+  bind_port: 7946
+
+# Metrics Generator Configuration
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: docker-compose
+  
+  storage:
+    path: /tmp/tempo/generator/wal
+  
+  traces_storage:
+    path: /tmp/tempo/generator/traces
+  
+  # Processors - just list them, no "enabled" field
+  processor:
+    service_graphs:
+      dimensions:
+        - http.method
+        - http.target
+        - http.status_code
+      histogram_buckets: [0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8]
+      max_items: 10000
+      wait: 10s
+      workers: 10
+    
+    span_metrics:
+      dimensions:
+        - http.method
+        - http.target
+        - http.status_code
+      histogram_buckets: [0.002, 0.004, 0.008, 0.016, 0.032, 0.064, 0.128, 0.256, 0.512, 1.024, 2.048, 4.096, 8.192, 16.384]
+
+# Override to enable processors
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics, local-blocks]
