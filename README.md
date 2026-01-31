@@ -1,4 +1,4 @@
-# laughing-octo-guacamole
+# OCPP 1.6j Basics: A short dive into emulating and observing OCPP 1.6j in action
 
 Minimal OCPP 1.6-J BootNotification exchange (happy path only) between a
 charge point emulator and a server over WebSockets.
